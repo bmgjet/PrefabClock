@@ -1,3 +1,5 @@
+using Oxide.Core;
+using Oxide.Core.Plugins;
 using ProtoBuf;
 using System;
 using System.Collections.Generic;
@@ -25,7 +27,7 @@ namespace Oxide.Plugins
         public DateTime TriggerDate = new DateTime(2021, 11, 26, 12,00,00);
         public bool Daily = true; //just uses time
         public int HowLong = 0; //Secs to keep output powered // 0 = until next day when daily or forever with date only.
-        public int ResetDelay = 60; //Sec before allowing triggering again.
+        public int ResetDelay = 5; //Sec before allowing triggering again.
         public bool AnnounceDoors = true; //Announces in Chat when a Door has Opened
         public bool AnnounceOrSwitch = true; //Announces in Chat when A ORSwitch has been triggered by clock
         //End Settings
@@ -35,6 +37,9 @@ namespace Oxide.Plugins
         public bool ADCooldown;
         public bool AOSCooldown;
         private static PrefabClock plugin;
+
+        [PluginReference]
+        private Plugin Vanish;
         #endregion
 
         #region Plugin Core
@@ -58,8 +63,6 @@ namespace Oxide.Plugins
 
         private void OnServerInitialized(bool initial)
         {
-            //Set up reference
-            plugin = this;
             //Delay startup if fresh server boot. Helps hooking on slow servers
             if (initial)
             {
@@ -86,6 +89,9 @@ namespace Oxide.Plugins
         private void Startup()
         {
             int Clocks = 0;
+            HourFormat12.Clear();
+            RealTime.Clear();
+            plugin = this;
             //Find All counters on the map
             for (int i = World.Serialization.world.prefabs.Count - 1; i >= 0; i--)
             {
@@ -94,7 +100,7 @@ namespace Oxide.Plugins
                 if (prefabdata.id == 4254177840 && prefabdata.category.Contains("BMGJETCLOCK"))
                 {
                     //Scan found counters
-                    PowerCounter PC = FindCounter(prefabdata.position, 0.1f);
+                    PowerCounter PC = FindCounter(prefabdata.position, 0.1f, Color.blue);
                     if (PC == null || PC.GetComponent<PrefabClockAddon>() != null) return;
                     //Keep track of 12 hour clocks.
                     if (prefabdata.category.Contains("BMGJETCLOCK12"))
@@ -132,12 +138,12 @@ namespace Oxide.Plugins
             }
         }
 
-        PowerCounter FindCounter(Vector3 pos, float radius)
+        PowerCounter FindCounter(Vector3 pos, float radius, Color c)
         {
             //Debug shows where its scanning for admins with see permission
             foreach (BasePlayer BP in BasePlayer.activePlayerList)
             {
-                if (BP.IsAdmin && BP.IPlayer.HasPermission(SeeIOOutput)) BP.SendConsoleCommand("ddraw.sphere", 8f, Color.blue, pos, radius);
+                if (BP.IsAdmin && BP.IPlayer.HasPermission(SeeIOOutput)) BP.SendConsoleCommand("ddraw.sphere", 8f, c, pos, radius);
             }
             //Scans area for counters
             List<PowerCounter> Counters = new List<PowerCounter>();
@@ -266,7 +272,7 @@ namespace Oxide.Plugins
                 Tcoil.maxDischargeSelfDamageSeconds = 999999f;
                 if (enabled)
                 {
-                    Tcoil.InvokeRepeating(Tcoil.Discharge, 1, 0.5f);
+                    Tcoil.InvokeRepeating(Tcoil.Discharge, 1, 0.50f);
                 }
                 else
                 {
@@ -316,6 +322,51 @@ namespace Oxide.Plugins
             return $"{letter}{z - 1}";
         }
 
+        public void ResetCanNetwork(BasePlayer player)
+        {
+            Vector3 OP = player.transform.position;
+            Tele(player, new Vector3(2000, 999f, 2000));
+            player.ChatMessage("Please wait 5 sec then youll be TP backed");
+            timer.Once(5f, () =>
+            {
+                Tele(player, OP);
+            });
+        }
+
+        public void Tele(BasePlayer player, Vector3 Pos)
+        {
+            if (!player.IsValid()) return;
+            try
+            {
+                player.SetParent(null, true, true);
+                player.EndLooting();
+                player.RemoveFromTriggers();
+                player.SetServerFall(true);
+                player.Teleport(Pos);
+                if (player.IsConnected)
+                {
+                    player.SetPlayerFlag(BasePlayer.PlayerFlags.ReceivingSnapshot, true);
+                    player.ClientRPCPlayer(null, player, "StartLoading");
+                    player.SendEntityUpdate();
+                    if (!IsInvisible(player)) // fix for becoming networked briefly with vanish while teleporting
+                    {
+                        player.UpdateNetworkGroup(); // 1.1.1 building fix @ctv
+                        player.SendNetworkUpdateImmediate(false);
+                    }
+                }
+            }
+            finally
+            {
+                player.SetServerFall(false);
+                player.ForceUpdateTriggers();
+            }
+        }
+
+        bool IsInvisible(BasePlayer player)
+        {
+            return Vanish != null && Vanish.Call<bool>("IsInvisible", player);
+        }
+
         void DestroyGroundComp(BaseEntity ent)
         {
             UnityEngine.Object.DestroyImmediate(ent.GetComponent<DestroyOnGroundMissing>());
@@ -329,6 +380,57 @@ namespace Oxide.Plugins
             foreach (var mesh in ent.GetComponentsInChildren<MeshCollider>())
             {
                 UnityEngine.Object.DestroyImmediate(mesh);
+            }
+        }
+
+        [ChatCommand("clockreset")]
+        private void CRestart(BasePlayer player, string command, string[] args)
+        {
+            if (player.IsAdmin)
+            {
+                player.ChatMessage("Unloading Plugin");
+                EnableOutput = !EnableOutput;
+                Unload();
+                player.ChatMessage("Resetting Plugin");
+                Startup();
+                EnableOutput = !EnableOutput;
+                Unload();
+                player.ChatMessage("Restarting Plugin");
+                Startup();
+            }
+        }
+        [ChatCommand("clockreload")]
+        private void CReload(BasePlayer player, string command, string[] args)
+        {
+            if (player.IsAdmin)
+            {
+                Unload();
+                player.ChatMessage("Reloading Plugin");
+                Startup();
+            }
+        }
+
+        [ChatCommand("clockview")]
+        private void CN2U(BasePlayer player, string command, string[] args)
+        {
+            if (player.IsAdmin && args.Length == 1)
+            {
+                if (args[0] == "true")
+                {
+                    player.ChatMessage("Adding View Permission");
+                    permission.GrantUserPermission(player.UserIDString, "PrefabClock.See", this);
+                    timer.Once(1f, () =>
+                    {
+                        ResetCanNetwork(player);
+                    });
+                    return;
+                }
+                player.ChatMessage("Removing View Permission");
+                permission.RevokeUserPermission(player.UserIDString, "PrefabClock.See");
+                timer.Once(1f, () =>
+                {
+                    ResetCanNetwork(player);
+                });
             }
         }
         #endregion
@@ -382,7 +484,7 @@ namespace Oxide.Plugins
                 Vector3 pos = Mins.transform.position;
                 pos -= Mins.transform.forward * 0.058f;
                 pos += Mins.transform.up * 0.168f;
-                ElectricalBlocker EB = plugin.FindSocket(pos, 0.5f);
+                ElectricalBlocker EB = plugin.FindSocket(pos, 0.25f);
                 //Check if outputs is enabled other wise destroy if ones has been created there.
                 if (!plugin.EnableOutput)
                 {
@@ -414,6 +516,8 @@ namespace Oxide.Plugins
                     //Link to a blocker if already present since must be server restart.
                     plugin.DestroyGroundComp(EB);
                     plugin.DestroyMeshCollider(EB);
+                    EB.OwnerID = 0;
+                    EB.skinID = 264592;
                     Output = EB;
                 }
             }
@@ -478,8 +582,8 @@ namespace Oxide.Plugins
                 //Cast sphere either side to work out location of counter
                 Vector3 Left = be.transform.position + be.transform.right * -0.2f;
                 Vector3 Right = be.transform.position + be.transform.right * 0.2f;
-                var CheckLeft = plugin.FindCounter(Left, 0.01f);
-                var CheckRight = plugin.FindCounter(Right, 0.01f);
+                var CheckLeft = plugin.FindCounter(Left, 0.01f,Color.red);
+                var CheckRight = plugin.FindCounter(Right, 0.01f, Color.red);
                 if (CheckLeft && CheckRight) return 1;
                 if (CheckLeft && !CheckRight) return 0;
                 if (!CheckLeft && CheckRight) return 2;
