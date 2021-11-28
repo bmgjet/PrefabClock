@@ -423,7 +423,7 @@ namespace Oxide.Plugins
                 if (plugin.Daily)
                 {
                     //Over-rides the year,month and day to make output daily.
-                    localTime = new DateTime(DateTime.Now.Year, DateTime.Now.Month, DateTime.Now.Day, localTime.Hour, localTime.Minute, localTime.Second);
+                    localTime = new DateTime(plugin.TriggerDate.Year, plugin.TriggerDate.Month, plugin.TriggerDate.Day, localTime.Hour, localTime.Minute, localTime.Second);
                 }
 
                 //Check Trigger event
