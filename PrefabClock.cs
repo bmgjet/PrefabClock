@@ -1,4 +1,3 @@
-using Oxide.Core;
 using Oxide.Core.Plugins;
 using ProtoBuf;
 using System;
@@ -8,7 +7,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("PrefabClock", "bmgjet", "1.0.0")]
+    [Info("PrefabClock", "bmgjet", "1.0.1")]
     [Description("Controls bmgjets clock prefab")]
     public class PrefabClock : RustPlugin
     {
@@ -17,25 +16,18 @@ namespace Oxide.Plugins
         const string SeeIOOutput = "PrefabClock.See";
 
         //Settings
-
         //TimeZoneOffset
         public int H = 0;
         public int M = 0;
 
-        //IO Output On Date Year,Month,Day,Hour,Min,Sec
-        public bool EnableOutput = true;
-        public DateTime TriggerDate = new DateTime(2021, 11, 26, 12,00,00);
-        public bool Daily = true; //just uses time
-        public int HowLong = 0; //Secs to keep output powered // 0 = until next day when daily or forever with date only.
-        public int ResetDelay = 5; //Sec before allowing triggering again.
-        public bool AnnounceDoors = true; //Announces in Chat when a Door has Opened
-        public bool AnnounceOrSwitch = true; //Announces in Chat when A ORSwitch has been triggered by clock
+        //IO Output
+        public bool EnableOutput = true;  //Provides date/time based output that triggers
+        public bool Announcements = true; //Announces in Chat when somethings triggered
         //End Settings
 
-        public List<Vector3> HourFormat12 = new List<Vector3>();
-        public List<Vector3> RealTime = new List<Vector3>();
-        public bool ADCooldown;
-        public bool AOSCooldown;
+        //Holds info collected from MAP.
+        Dictionary<Vector3, string> ClockSettings = new Dictionary<Vector3, string>();
+        //Reference for componant
         private static PrefabClock plugin;
 
         [PluginReference]
@@ -45,17 +37,19 @@ namespace Oxide.Plugins
         #region Plugin Core
         private void Init()
         {
+            //Set up permission that allows seeing clock blocker IO
             permission.RegisterPermission(SeeIOOutput, this);
         }
 
         //Hides spawned ElectricalBlockers that are used as IO point
         object CanNetworkTo(ElectricalBlocker EB, BasePlayer player)
         {
-            //ID it by owner id and skinid to return fast on other objects
+            //ID it by ownerid and skinid to return fast on other ElectricalBlocker
             if (EB.OwnerID != 0 && EB.skinID != 264592) return null;
-            //If player doesnt have permission to see disable them seeing it
-            if (!player.IPlayer.HasPermission(SeeIOOutput))
+            //If player has permission allow them to see clock blocker IO
+            if (player.IPlayer.HasPermission(SeeIOOutput))
             {
+                //Return anything other than null
                 return false;
             }
             return null;
@@ -69,6 +63,7 @@ namespace Oxide.Plugins
                 Fstartup();
                 return;
             }
+            //Startup plugin
             Startup();
         }
 
@@ -79,6 +74,7 @@ namespace Oxide.Plugins
             {
                 if (BasePlayer.activePlayerList.Count == 0)
                 {
+                    //No players so run a timer again in 10 sec to check.
                     Fstartup();
                     return;
                 }
@@ -88,9 +84,11 @@ namespace Oxide.Plugins
 
         private void Startup()
         {
+            //Int to keep track of added scripts
             int Clocks = 0;
-            HourFormat12.Clear();
-            RealTime.Clear();
+            //Clears clocksettings incase its triggered reload.
+            ClockSettings.Clear();
+            //Add reference to plugin for scripts to use.
             plugin = this;
             //Find All counters on the map
             for (int i = World.Serialization.world.prefabs.Count - 1; i >= 0; i--)
@@ -101,34 +99,33 @@ namespace Oxide.Plugins
                 {
                     //Scan found counters
                     PowerCounter PC = FindCounter(prefabdata.position, 0.1f, Color.blue);
+                    string settings = prefabdata.category.Split(':')[1].Replace("\\","");
+
+                    //Do nothing since already a script there or no couter at that position.
                     if (PC == null || PC.GetComponent<PrefabClockAddon>() != null) return;
-                    //Keep track of 12 hour clocks.
-                    if (prefabdata.category.Contains("BMGJETCLOCK12"))
-                    {
-                        HourFormat12.Add(PC.transform.position);
-                    }
-                    //Keep track of clocks showing the real time instead of game time.
-                    if (prefabdata.category.Contains("REALTIME"))
-                    {
-                        RealTime.Add(PC.transform.position);
-                    }
+                    //Keep track of prefab position and settings
+                    ClockSettings.Add(PC.transform.position, settings);
+
                     //Power up counter so it displays numbers
                     PC.SetFlag(PowerCounter.Flag_HasPower, true);
-                    //Disable showing power its passing
+                    //Disable showing power its passing to show its target
                     PC.SetFlag(PowerCounter.Flag_ShowPassthrough, false);
                     //Add clock script
                     PC.gameObject.AddComponent<PrefabClockAddon>();
                     PC.SendNetworkUpdateImmediate();
+                    //Add another script to the counter.
                     Clocks++;
                 }
             }
+            //Outputs debug info
             Puts("Running " + Clocks.ToString() + " clock scripts");
         }
 
         private void Unload()
         {
+            //Remove static reference to self
             plugin = null;
-            //Remove scripts incase its a plugin restart and not server restart.
+            //Remove scripts incase its a plugin restart and not server restart which would destroy them
             foreach (var ClockScripts in GameObject.FindObjectsOfType<PowerCounter>())
             {
                 foreach (var cs in ClockScripts.GetComponentsInChildren<PrefabClockAddon>())
@@ -155,14 +152,15 @@ namespace Oxide.Plugins
             }
             return null;
         }
+
         ElectricalBlocker FindSocket(Vector3 pos, float radius)
         {
             //Debug shows where its scanning for admins with see permission
-             foreach (BasePlayer BP in BasePlayer.activePlayerList)
+            foreach (BasePlayer BP in BasePlayer.activePlayerList)
             {
-                if(BP.IsAdmin && BP.IPlayer.HasPermission(SeeIOOutput)) BP.SendConsoleCommand("ddraw.sphere", 8f, Color.green, pos, radius);
+                if (BP.IsAdmin && BP.IPlayer.HasPermission(SeeIOOutput)) BP.SendConsoleCommand("ddraw.sphere", 8f, Color.green, pos, radius);
             }
-             //Scan for electrical blockers which are used a IO points
+            //Scan for electrical blockers which are used a IO points
             List<ElectricalBlocker> Counters = new List<ElectricalBlocker>();
             Vis.Entities<ElectricalBlocker>(pos, radius, Counters);
             foreach (ElectricalBlocker FS in Counters)
@@ -173,14 +171,19 @@ namespace Oxide.Plugins
             return null;
         }
 
-        //Logic behind toggling the IO
+        //Loop that follows the output path on IO
+        void FollowIOPath(IOEntity FollowIOPath, bool Enable)
+        {
+            while (FollowIOPath != null)
+            {
+                //Keep looping until the end of the path.
+                FollowIOPath = plugin.ToggleIO(FollowIOPath, Enable);
+            }
+        }
+
+        //Logic behind toggling the IO since we arnt using power unless first connect item is a orswitch
         IOEntity ToggleIO(IOEntity FollowIOPath, bool enabled)
         {
-            //If its not already enabled add a timer to disable it
-            if(!FollowIOPath.HasFlag(BaseEntity.Flags.Reserved8))
-            {
-                DisableTimer(FollowIOPath);
-            }
             //Enable it
             FollowIOPath.SetFlag(BaseEntity.Flags.Reserved8, enabled);
             FollowIOPath.SetFlag(IOEntity.Flag_HasPower, enabled);
@@ -190,15 +193,19 @@ namespace Oxide.Plugins
             Igniter igniter = FollowIOPath as Igniter;
             if (igniter != null)
             {
+                //Remove it from destroying itself
                 igniter.SelfDamagePerIgnite = 0f;
                 if (enabled)
                 {
+                    //Triggers its input as having 100 power.
                     igniter.UpdateHasPower(100, 0);
                 }
                 else
                 {
+                    //Triggers its input as having 0 power so it switches off.
                     igniter.UpdateHasPower(0, 0);
                 }
+                //End loop so theres no outputs from an ignitor
                 return null;
             }
 
@@ -209,59 +216,27 @@ namespace Oxide.Plugins
                 DoorMan.SetFlag(DoorManipulator.Flags.Open, enabled);
                 //Triggers the action
                 DoorMan.DoAction();
-                if (AnnounceDoors && !ADCooldown)
-                {
-                    if (enabled)
-                    {
-                        ADCooldown = true;
-                        //Cool down to stop chat spam with logs of doors.
-                        timer.Once(5f, () =>
-                         {
-                             ADCooldown = false;
-                         });
-                        CreateAnouncment("Door @ " + plugin.getGrid(DoorMan.transform.position) + " <color=green>Opened</color>");
-                    }
-                    else
-                    {
-                        ADCooldown = true;
-                        timer.Once(5f, () =>
-                        {
-                            ADCooldown = false;
-                        });
-                        CreateAnouncment("Door @ " + plugin.getGrid(DoorMan.transform.position) + " <color=red>Closed</color>");
-                    }
-                }
+                //Exit function early to improve performance on long door strings
+                DoorMan.SendNetworkUpdateImmediate();
+                return DoorMan.outputs[0].connectedTo.ioEnt;
             }
-            //Handle Or switch differently then following its path and enabling each item.
+            //Handle OrSwitch Use a Orswitch as a power output.
             ORSwitch OrSwitch = FollowIOPath as ORSwitch;
             if (OrSwitch != null)
             {
                 if (enabled)
                 {
-                    if (AnnounceOrSwitch && !AOSCooldown)
-                    {
-                        AOSCooldown = true;
-                        timer.Once(5f, () =>
-                        {
-                            AOSCooldown = false;
-                        });
-                        CreateAnouncment("Event: <color=green>Enabled</color> @ " + plugin.getGrid(OrSwitch.transform.position));
-                    }
-                        OrSwitch.UpdateFromInput(100, 0);
+                    //Makes it output 999 power
+                    OrSwitch.UpdateFromInput(999, 0);
                 }
                 else
                 {
-                    if (AnnounceOrSwitch && !AOSCooldown)
-                    {
-                        AOSCooldown = true;
-                        timer.Once(5f, () =>
-                        {
-                            AOSCooldown = false;
-                        });
-                        CreateAnouncment("Event: <color=red>Disabled</color> @ " + plugin.getGrid(OrSwitch.transform.position));
-                    }
+                    //Removes all its power.
                     OrSwitch.UpdateFromInput(0, 0);
                 }
+                //Exit early and dont follow the path since real power will trigger the rest of the stuff.
+                OrSwitch.UpdateOutputs();
+                OrSwitch.SendNetworkUpdateImmediate();
                 return null;
             }
             //Handle Teslacoil if using timer on one as a trap.
@@ -269,6 +244,7 @@ namespace Oxide.Plugins
             if (Tcoil != null)
             {
                 Tcoil.SetFlag(TeslaCoil.Flag_StrongShorting, enabled);
+                //Need to do something about a damage setting
                 Tcoil.maxDischargeSelfDamageSeconds = 999999f;
                 if (enabled)
                 {
@@ -286,21 +262,10 @@ namespace Oxide.Plugins
             return FollowIOPath.outputs[0].connectedTo.ioEnt;
         }
 
-        public void DisableTimer(IOEntity IOE)
-        {
-            //Only create a disable timer if a time to run is set.
-            if (HowLong > 0)
-            {
-                timer.Once(HowLong, () =>
-                 {
-                     ToggleIO(IOE, false);
-                 });
-            }
-        }
-
         //Sends message to all active players under a steamID
         void CreateAnouncment(string msg)
         {
+            //Loop though each player on the server. Cast to array incase theres a player joining or leaving as messages are getting sent.
             foreach (BasePlayer current in BasePlayer.activePlayerList.ToArray())
             {
                 if (current.IsConnected)
@@ -322,15 +287,31 @@ namespace Oxide.Plugins
             return $"{letter}{z - 1}";
         }
 
+        //Resets the ability for the admin to see the IO on the Clocks
         public void ResetCanNetwork(BasePlayer player)
         {
+            //Holds Orignal position
             Vector3 OP = player.transform.position;
-            Tele(player, new Vector3(2000, 999f, 2000));
-            player.ChatMessage("Please wait 5 sec then youll be TP backed");
-            timer.Once(5f, () =>
+            //Teleports player to a random position so they move further enough away to derender the IO with out having to disconnect
+            Tele(player, RandomLocation());
+            player.ChatMessage("Please wait 10 sec then youll be TP backed");
+            //Delay to allow stuff to load out.
+            timer.Once(10f, () =>
             {
                 Tele(player, OP);
             });
+        }
+
+        private Vector3 RandomLocation()
+        {
+           uint RanMapSize = (uint)(World.Size / 1.5);
+            if (RanMapSize >= 4000)
+            {
+                RanMapSize = 3900; //Limits player from going past 4000 kill point
+            }
+            System.Random rnd = new System.Random(DateTime.Now.Millisecond);
+            //Pick random location on the map.
+            return new Vector3(rnd.Next(Math.Abs((int)RanMapSize) * (-1), (int)RanMapSize), rnd.Next(820, 943), rnd.Next(Math.Abs((int)RanMapSize) * (-1), ((int)RanMapSize)));
         }
 
         public void Tele(BasePlayer player, Vector3 Pos)
@@ -338,15 +319,20 @@ namespace Oxide.Plugins
             if (!player.IsValid()) return;
             try
             {
+                //Stops players actions
                 player.SetParent(null, true, true);
                 player.EndLooting();
                 player.RemoveFromTriggers();
+                //Disables fall damage
                 player.SetServerFall(true);
+                //Moves the player
                 player.Teleport(Pos);
                 if (player.IsConnected)
                 {
+                    //Puts player into loading screen
                     player.SetPlayerFlag(BasePlayer.PlayerFlags.ReceivingSnapshot, true);
                     player.ClientRPCPlayer(null, player, "StartLoading");
+                    //Sends new entity list to player
                     player.SendEntityUpdate();
                     if (!IsInvisible(player)) // fix for becoming networked briefly with vanish while teleporting
                     {
@@ -357,11 +343,13 @@ namespace Oxide.Plugins
             }
             finally
             {
-                player.SetServerFall(false);
+                //Remove fall protection and updates triggers
                 player.ForceUpdateTriggers();
+                player.SetServerFall(false);
             }
         }
 
+        //Hook vanish plugin
         bool IsInvisible(BasePlayer player)
         {
             return Vanish != null && Vanish.Call<bool>("IsInvisible", player);
@@ -383,6 +371,7 @@ namespace Oxide.Plugins
             }
         }
 
+        //Uses the fact that having outputs disabled removes all spawned ones so toggles that off and on restarting the plugin.
         [ChatCommand("clockreset")]
         private void CRestart(BasePlayer player, string command, string[] args)
         {
@@ -402,6 +391,7 @@ namespace Oxide.Plugins
         [ChatCommand("clockreload")]
         private void CReload(BasePlayer player, string command, string[] args)
         {
+            //Restarts the plugin
             if (player.IsAdmin)
             {
                 Unload();
@@ -413,22 +403,27 @@ namespace Oxide.Plugins
         [ChatCommand("clockview")]
         private void CN2U(BasePlayer player, string command, string[] args)
         {
+            //Gives admin ability to see Clock Blockers IO
             if (player.IsAdmin && args.Length == 1)
             {
                 if (args[0] == "true")
                 {
                     player.ChatMessage("Adding View Permission");
+                    //Give permission
                     permission.GrantUserPermission(player.UserIDString, "PrefabClock.See", this);
                     timer.Once(1f, () =>
                     {
+                        //small delay to permissions to take effect.
                         ResetCanNetwork(player);
                     });
                     return;
                 }
                 player.ChatMessage("Removing View Permission");
+                //Remove permission
                 permission.RevokeUserPermission(player.UserIDString, "PrefabClock.See");
                 timer.Once(1f, () =>
                 {
+                    //small delay to permissions to take effect.
                     ResetCanNetwork(player);
                 });
             }
@@ -445,19 +440,101 @@ namespace Oxide.Plugins
             private ElectricalBlocker Output;
             //Get game time based on sky.
             TOD_Sky Sky = TOD_Sky.Instance;
+            //24 Hour Clock
+            private bool hour24 = false;
             //Check if using the real time
             private bool RealTime = false;
-            //Logic to stop spamming events
-            private bool HasTrigged = false;
-            private long CoolDown = plugin.HowLong + plugin.ResetDelay;
+            //Check if should trigger daily
+            private bool Daily = false;
+            //Trigger Date
+            DateTime TriggerDate = new DateTime(2021, 11, 26, 12,00,00);
+            //How long to wait before closing
+            private int CloseDelay = 10;
+            //Custom Text
+            string CustomText = "";
+            //Track of if its already trigged
+            private bool triggered = false;
 
             private void Awake()
             {
                 PowerCounter ThisCounter = GetComponent<PowerCounter>();
-                //Check what time of clock to use
-                if (plugin.RealTime.Contains(ThisCounter.transform.position))
+                //Sets up clocks settings from its custom prefab name
+                if (plugin.ClockSettings.ContainsKey(ThisCounter.transform.position))
                 {
-                    RealTime = true;
+                    //Reloads settings based on this scripts position.
+                    string settings = plugin.ClockSettings[ThisCounter.transform.position];
+                    //Settings are seperated by a fullstop
+                    string[] ParsedSettings = settings.Split('.');
+                    //Load type of clock
+                    if (ParsedSettings[0].Contains("CLOCK24"))
+                    {
+                        hour24 = true;
+                    }
+                    else if (ParsedSettings[0].Contains("CLOCK12"))
+                    {
+                        hour24 = false;
+                    }
+                    else
+                    {
+                        //Warn that there is invalid setting
+                        plugin.Puts("Invalid CLOCK12 or CLOCK24 Name @ " + plugin.getGrid(ThisCounter.transform.position));
+                        return;
+                    }
+                    try
+                    {
+                        //Only changes to real clock if a R is set
+                        if (ParsedSettings[1] == "R")
+                        {
+                            RealTime = true;
+                        }
+                    }catch
+                    {
+                        //Warn that there is invalid setting
+                        plugin.Puts("Unable to parse R or S from clock prefab @ " + plugin.getGrid(ThisCounter.transform.position));
+                        return;
+                    }
+                    try
+                    {
+                        //Loads date trigger
+                        int year = int.Parse(ParsedSettings[2]);
+                        int month = int.Parse(ParsedSettings[3]);
+                        int day = int.Parse(ParsedSettings[4]);
+                        int hour = int.Parse(ParsedSettings[5]);
+                        int min = int.Parse(ParsedSettings[6]);
+                        int sec = int.Parse(ParsedSettings[7]);
+                        //If date is set to 00.00.00 then set it as a daily trigger
+                        if (year == 0 && month == 0 && day == 0)
+                        {
+                            year = DateTime.Now.Year;
+                            month = DateTime.Now.Month;
+                            day = DateTime.Now.Day;
+                            Daily = true;
+                        }
+                        TriggerDate = new DateTime(year, month, day, hour, min, sec);
+                    }
+                    catch 
+                    {
+                        //Warn that there is invalid setting
+                        plugin.Puts("Invalid Date/Time Setting in clock @ " + plugin.getGrid(ThisCounter.transform.position));
+                        return;
+                    }
+                    try
+                    {
+                        CloseDelay = int.Parse(ParsedSettings[8]);
+                    }
+                    catch 
+                    {
+                        //Warn that there is invalid setting
+                        plugin.Puts("Invalid CloseDelay Setting in clock @ " + plugin.getGrid(ThisCounter.transform.position));
+                        return;
+                    }
+                    //No warning on this if it fails since could just be left empty.
+                    try
+                    {
+                        CustomText = ParsedSettings[9];
+                    }
+                    catch
+                    { }
                 }
                 //Find what position the counter is
                 switch (CheckMe(ThisCounter))
@@ -467,6 +544,7 @@ namespace Oxide.Plugins
                         break;
                     case 1:
                         Mins = ThisCounter;
+                        //Add the output at the middle of the clock
                         AddOutput();
                         break;
                     case 2:
@@ -516,78 +594,82 @@ namespace Oxide.Plugins
                     //Link to a blocker if already present since must be server restart.
                     plugin.DestroyGroundComp(EB);
                     plugin.DestroyMeshCollider(EB);
+                    //How its identified
                     EB.OwnerID = 0;
                     EB.skinID = 264592;
+                    //Reference
                     Output = EB;
                 }
             }
 
             void CheckOutputs(DateTimeOffset localTime)
             {
-                if (plugin.Daily)
+                if (Daily)
                 {
                     //Over-rides the year,month and day to make output daily.
-                    localTime = new DateTime(plugin.TriggerDate.Year, plugin.TriggerDate.Month, plugin.TriggerDate.Day, localTime.Hour, localTime.Minute, localTime.Second);
+                    localTime = new DateTime(TriggerDate.Year, TriggerDate.Month, TriggerDate.Day, localTime.Hour, localTime.Minute, localTime.Second);
                 }
 
                 //Check Trigger event
-                if (localTime >= plugin.TriggerDate)
+                if (localTime >= TriggerDate)
                 {
-                    //Logic to stop spamming event switches
-                    if (HasTrigged)
-                    {
-                        if (CoolDown <= 0)
-                        {
-                            HasTrigged = false;
-                            CoolDown = plugin.HowLong + plugin.ResetDelay;
-                        }
-                        else
-                        {
-                            CoolDown--;
-                            return;
-                        }
-                    }
                     //Switch on if not on.
-                    if (!Output.HasFlag(BaseEntity.Flags.Reserved8))
+                    if (!Output.HasFlag(BaseEntity.Flags.Reserved8) && !triggered)
                     {
-                        HasTrigged = true;
+                        triggered = true;
                         //toggle IO path
-                        var FollowIOPath = Output as IOEntity;
-                        //Keep looping the path to trigger all things along it
-                        while (FollowIOPath != null)
+                        plugin.FollowIOPath(Output, true);
+                        if(plugin.Announcements && CustomText != "")
                         {
-                            FollowIOPath = plugin.ToggleIO(FollowIOPath, true);
+                            plugin.CreateAnouncment(CustomText + " @ " + plugin.getGrid(Output.transform.position) + " <color=green>Opened</color>");
+                        }
+                        //Add disable timer if set
+                        if (CloseDelay != 0)
+                        {
+                            Invoke("switchoff", CloseDelay);
                         }
                     }
                 }
                 else
                 {
+                    triggered = false;
                     //Switch off if on.
                     if (Output.HasFlag(BaseEntity.Flags.Reserved8))
                     {
-                        //toggle IO Path
-                        var FollowIOPath = Output as IOEntity;
-                        //Keep looping the path to trigger all things along it
-                        while (FollowIOPath != null)
+                        if (plugin.Announcements && CustomText != "")
                         {
-                            FollowIOPath = plugin.ToggleIO(FollowIOPath, false);
+                            plugin.CreateAnouncment(CustomText + " @ " + plugin.getGrid(Output.transform.position) + " <color=red>Closed</color>");
                         }
+                        //toggle IO Path
+                        plugin.FollowIOPath(Output, false);
                     }
                 }
             }
 
 
+
             int CheckMe(BaseEntity be)
             {
-                //Cast sphere either side to work out location of counter
+                //Work out which counter it is
                 Vector3 Left = be.transform.position + be.transform.right * -0.2f;
                 Vector3 Right = be.transform.position + be.transform.right * 0.2f;
-                var CheckLeft = plugin.FindCounter(Left, 0.01f,Color.red);
+                var CheckLeft = plugin.FindCounter(Left, 0.01f, Color.red);
                 var CheckRight = plugin.FindCounter(Right, 0.01f, Color.red);
                 if (CheckLeft && CheckRight) return 1;
                 if (CheckLeft && !CheckRight) return 0;
                 if (!CheckLeft && CheckRight) return 2;
                 return -1;
+            }
+
+            void switchoff()
+            {
+                //Send the announcement if its enabled
+                if (plugin.Announcements && CustomText != "")
+                {
+                    plugin.CreateAnouncment(CustomText + " @ " + plugin.getGrid(Output.transform.position) + " <color=red>Closed</color>");
+                }
+                //Disable the IO
+                plugin.FollowIOPath(Output, false);
             }
 
             void tick()
@@ -601,19 +683,20 @@ namespace Oxide.Plugins
                     localTime.AddHours(plugin.H);
                     localTime.AddMinutes(plugin.M);
                 }
-                //If clock is a out put check its conditions
-                if(Output !=null)
+                //If clock is a output check its conditions
+                if (Output != null)
                 {
                     CheckOutputs(localTime);
                 }
                 if (Hours != null)
                 {
-                    if (plugin.HourFormat12.Contains(Hours.transform.position))
+                    if (!hour24)
                     {
                         //12 hour clock layout
                         int h = int.Parse(localTime.ToString("hh"));
                         if (Hours.counterNumber != h)
                         {
+                            //use little hh for 12 hour layout
                             Hours.SetCounterNumber(int.Parse(localTime.ToString("hh")));
                             Hours.SendNetworkUpdateImmediate();
                             return;
