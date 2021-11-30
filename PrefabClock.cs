@@ -3,6 +3,7 @@ using ProtoBuf;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using UnityEngine;
 
 namespace Oxide.Plugins
@@ -11,18 +12,67 @@ namespace Oxide.Plugins
     [Description("Controls bmgjets clock prefab")]
     public class PrefabClock : RustPlugin
     {
+        //Prefab name layouts
+        //Example
+        //BMGJETCLOCK24.S.00.00.00.15.00.00.60.{CRED}Light{CEND} And {CBLUE}Tesla Coil{CEND} @ {P} Has {1}
+
+        //Break Down
+        //BMGJETCLOCK to trigger plugin on prefab name
+        //24 or 12 to set desplay type.
+        //full stop "." to seperate next settings.
+
+        //S = Games time
+        //R = Real time
+        //Add a C to make it a count down so like SC or RC.
+
+        //Year to trigger on example 2021
+        //Month to trigger on Example 11
+        //Day to trigger on example 30
+        //Use 00.00.00 to make it trigger daily
+
+        //Delay before it deactivates. Example shown is 60 seconds. Use 00 to make it never disable. If using daily setting will reset at midnight.
+
+        //Lastly text that will be used in the announcement messages if they are enabled.
+        //Leave it blank for no annoucements on that clocks trigger.
+        //REGEX is used to set up custom things.
+        //Such as the example {CRED} would replace that with <color=red>
+        //{P} outputs the grid position
+        //{1} selects what state text to use.
+        //These can be changed or added to in the plugin below
+
+        Dictionary<string, Dictionary<string, string>> CustomText = new Dictionary<string, Dictionary<string, string>>()
+        {
+        //ID used                                      Message when triggered          Message when disabled
+        {"{1}", new Dictionary<string, string>(){{"<color=green>Enabled</color>", "<color=red>Disabled</color>"}}},
+        {"{2}", new Dictionary<string, string>(){{"<color=green>Opened</color>", "<color=red>Closed</color>"}}},
+        };
+
+        //Custom Tags
+        Dictionary<string, string> CustomTags = new Dictionary<string, string>()
+        {
+        //ID       Replace with
+        {"{CEND}", "</color>"},
+        {"{CRED}", "<color=red>"},
+        {"{CBLUE}","<color=blue>"},
+        {"{CORANGE}","<color=orange>"},
+        };
+
+
         #region Vars
         //Permission to see IO Output
         const string SeeIOOutput = "PrefabClock.See";
 
         //Settings
         //TimeZoneOffset
-        public int H = 0;
-        public int M = 0;
+        public int D = 0; //Days
+        public int H = 0; //Hours
+        public int M = 0; //Mins
+        public int S = 0; //Secs
 
         //IO Output
         public bool EnableOutput = true;  //Provides date/time based output that triggers
         public bool Announcements = true; //Announces in Chat when somethings triggered
+        public string SteamIcon = "76561197980831914"; //Get Icon from this profile for use in announcements
         //End Settings
 
         //Holds info collected from MAP.
@@ -30,6 +80,7 @@ namespace Oxide.Plugins
         //Reference for componant
         private static PrefabClock plugin;
 
+        //Reference Vanish plugin since can cause issues when players are in vanish and moving them.
         [PluginReference]
         private Plugin Vanish;
         #endregion
@@ -47,11 +98,12 @@ namespace Oxide.Plugins
             //ID it by ownerid and skinid to return fast on other ElectricalBlocker
             if (EB.OwnerID != 0 && EB.skinID != 264592) return null;
             //If player has permission allow them to see clock blocker IO
-            if (player.IPlayer.HasPermission(SeeIOOutput))
+            if (!player.IPlayer.HasPermission(SeeIOOutput))
             {
-                //Return anything other than null
+                //Return anything other than null to make it invisiable
                 return false;
             }
+            //Normal behavour
             return null;
         }
 
@@ -78,6 +130,7 @@ namespace Oxide.Plugins
                     Fstartup();
                     return;
                 }
+                //Starup script now.
                 Startup();
             });
         }
@@ -99,7 +152,7 @@ namespace Oxide.Plugins
                 {
                     //Scan found counters
                     PowerCounter PC = FindCounter(prefabdata.position, 0.1f, Color.blue);
-                    string settings = prefabdata.category.Split(':')[1].Replace("\\","");
+                    string settings = prefabdata.category.Split(':')[1].Replace("\\", "");
 
                     //Do nothing since already a script there or no couter at that position.
                     if (PC == null || PC.GetComponent<PrefabClockAddon>() != null) return;
@@ -130,6 +183,7 @@ namespace Oxide.Plugins
             {
                 foreach (var cs in ClockScripts.GetComponentsInChildren<PrefabClockAddon>())
                 {
+                    //Destroy the script
                     UnityEngine.Object.DestroyImmediate(cs);
                 }
             }
@@ -248,10 +302,12 @@ namespace Oxide.Plugins
                 Tcoil.maxDischargeSelfDamageSeconds = 999999f;
                 if (enabled)
                 {
+                    //Trigger teslacoils function
                     Tcoil.InvokeRepeating(Tcoil.Discharge, 1, 0.50f);
                 }
                 else
                 {
+                    //Stops teslacoils function
                     Tcoil.CancelInvoke(Tcoil.Discharge);
                 }
                 return null;
@@ -263,14 +319,44 @@ namespace Oxide.Plugins
         }
 
         //Sends message to all active players under a steamID
-        void CreateAnouncment(string msg)
+        void CreateAnouncment(string msg, bool open, Vector3 pos)
         {
+            //Parse out text tags with regex
+            // {P} give position on grid
+            msg = msg.Replace("{P}", getGrid(pos));
+            //Find outher tags with in { } brackets
+            MatchCollection matches = Regex.Matches(msg, "{.*?}");
+            foreach (Match match in matches)
+            {
+                //Tags to replace things you cant enter in the prefab name like color codes.
+                if(CustomTags.ContainsKey(match.ToString()))
+                {
+                    msg = msg.Replace(match.ToString(), CustomTags[match.ToString()]);
+                    continue;
+                }
+
+                //Check if the tag exsists in the CustomText Dictornaray.
+                if (CustomText.ContainsKey(match.ToString()))
+                {
+                    if (open)
+                    {
+                        //Send Triggered Message
+                        msg = msg.Replace(match.ToString(), CustomText[match.ToString()].ElementAt(0).Key);
+                    }
+                    else
+                    {
+                        //Send untriggered message
+                        msg = msg.Replace(match.ToString(), CustomText[match.ToString()].ElementAt(0).Value);
+                    }
+                }
+            }
             //Loop though each player on the server. Cast to array incase theres a player joining or leaving as messages are getting sent.
             foreach (BasePlayer current in BasePlayer.activePlayerList.ToArray())
             {
                 if (current.IsConnected)
                 {
-                    rust.SendChatMessage(current, "", msg, "76561197980831914");
+                    //Send message as a user so can use there steam picture
+                    rust.SendChatMessage(current, "", msg, SteamIcon);
                 }
             }
         }
@@ -292,25 +378,41 @@ namespace Oxide.Plugins
         {
             //Holds Orignal position
             Vector3 OP = player.transform.position;
-            //Teleports player to a random position so they move further enough away to derender the IO with out having to disconnect
-            Tele(player, RandomLocation());
+            //Create a platform to stand on temporally
+            BuildingBlock entity = GameManager.server.CreateEntity("assets/prefabs/building core/floor/floor.prefab", RandomLocation(), player.transform.rotation) as BuildingBlock;
+            if (entity == null) return;
+            entity.Spawn();
+            //Grounded so doesnt fall apart
+            entity.grounded = true;
+            //Attach it to a new ID
+            entity.AttachToBuilding(BuildingManager.server.NewBuildingID());
+            //Set its health as max for its building grade
+            entity.health = entity.MaxHealth();
+            //Update clients
+            entity.SendNetworkUpdateImmediate();
+            //Teleports player to platform
+            Tele(player, entity.transform.position);
             player.ChatMessage("Please wait 10 sec then youll be TP backed");
             //Delay to allow stuff to load out.
             timer.Once(10f, () =>
             {
                 Tele(player, OP);
+                //Remove the temp platform.
+                entity.Kill();
             });
         }
 
         private Vector3 RandomLocation()
         {
-           uint RanMapSize = (uint)(World.Size / 1.5);
+            //Gets the world size. Grid coverage is half the actualy world size
+            uint RanMapSize = (uint)(World.Size / 1.5);
             if (RanMapSize >= 4000)
             {
                 RanMapSize = 3900; //Limits player from going past 4000 kill point
             }
+            //Seeds random function with number from datetime
             System.Random rnd = new System.Random(DateTime.Now.Millisecond);
-            //Pick random location on the map.
+            //Pick random location on the map at height 820-943 to not interfere with players.
             return new Vector3(rnd.Next(Math.Abs((int)RanMapSize) * (-1), (int)RanMapSize), rnd.Next(820, 943), rnd.Next(Math.Abs((int)RanMapSize) * (-1), ((int)RanMapSize)));
         }
 
@@ -357,7 +459,9 @@ namespace Oxide.Plugins
 
         void DestroyGroundComp(BaseEntity ent)
         {
+            //Stops things breaking from not being grounded
             UnityEngine.Object.DestroyImmediate(ent.GetComponent<DestroyOnGroundMissing>());
+            //Stops the checking of being grounded
             UnityEngine.Object.DestroyImmediate(ent.GetComponent<GroundWatch>());
             //Stops Decay
             UnityEngine.Object.DestroyImmediate(ent.GetComponent<DeployableDecay>());
@@ -367,6 +471,7 @@ namespace Oxide.Plugins
         {
             foreach (var mesh in ent.GetComponentsInChildren<MeshCollider>())
             {
+                //Removes the collider doesnt interfere since its already in a prefabed invisiable collider to stop players messing with counters settings.
                 UnityEngine.Object.DestroyImmediate(mesh);
             }
         }
@@ -433,6 +538,8 @@ namespace Oxide.Plugins
         #region Clock Scripts
         private class PrefabClockAddon : MonoBehaviour
         {
+            //Show as a countdown to trigger
+            bool Countdown = false;
             //Use script on the 3 counters.
             private PowerCounter Hours;
             private PowerCounter Mins;
@@ -447,7 +554,7 @@ namespace Oxide.Plugins
             //Check if should trigger daily
             private bool Daily = false;
             //Trigger Date
-            DateTime TriggerDate = new DateTime(2021, 11, 26, 12,00,00);
+            DateTime TriggerDate = new DateTime(2021, 11, 26, 12, 00, 00);
             //How long to wait before closing
             private int CloseDelay = 10;
             //Custom Text
@@ -483,11 +590,27 @@ namespace Oxide.Plugins
                     try
                     {
                         //Only changes to real clock if a R is set
-                        if (ParsedSettings[1] == "R")
+                        switch (ParsedSettings[1])
                         {
-                            RealTime = true;
+                            case "R": //Real time
+                                RealTime = true;
+                                Countdown = false;
+                                break;
+                            case "S": //Games time
+                                RealTime = false;
+                                Countdown = false;
+                                break;
+                            case "RC": //Real Time count down to trigger
+                                RealTime = true;
+                                Countdown = true;
+                                break;
+                            case "SC": //Game time count down to trigger
+                                RealTime = false;
+                                Countdown = true;
+                                break;
                         }
-                    }catch
+                    }
+                    catch
                     {
                         //Warn that there is invalid setting
                         plugin.Puts("Unable to parse R or S from clock prefab @ " + plugin.getGrid(ThisCounter.transform.position));
@@ -510,9 +633,10 @@ namespace Oxide.Plugins
                             day = DateTime.Now.Day;
                             Daily = true;
                         }
+                        //Sets the date/time to trigger on.
                         TriggerDate = new DateTime(year, month, day, hour, min, sec);
                     }
-                    catch 
+                    catch
                     {
                         //Warn that there is invalid setting
                         plugin.Puts("Invalid Date/Time Setting in clock @ " + plugin.getGrid(ThisCounter.transform.position));
@@ -520,9 +644,10 @@ namespace Oxide.Plugins
                     }
                     try
                     {
+                        //Loads the delay in closing
                         CloseDelay = int.Parse(ParsedSettings[8]);
                     }
-                    catch 
+                    catch
                     {
                         //Warn that there is invalid setting
                         plugin.Puts("Invalid CloseDelay Setting in clock @ " + plugin.getGrid(ThisCounter.transform.position));
@@ -619,9 +744,10 @@ namespace Oxide.Plugins
                         triggered = true;
                         //toggle IO path
                         plugin.FollowIOPath(Output, true);
-                        if(plugin.Announcements && CustomText != "")
+                        //If announcements enabled and a custom text is set make annoucement
+                        if (plugin.Announcements && CustomText != "")
                         {
-                            plugin.CreateAnouncment(CustomText + " @ " + plugin.getGrid(Output.transform.position) + " <color=green>Opened</color>");
+                            plugin.CreateAnouncment(CustomText, true, Output.transform.position);
                         }
                         //Add disable timer if set
                         if (CloseDelay != 0)
@@ -636,17 +762,16 @@ namespace Oxide.Plugins
                     //Switch off if on.
                     if (Output.HasFlag(BaseEntity.Flags.Reserved8))
                     {
+                        //If announcements enabled and a custom text is set make annoucement
                         if (plugin.Announcements && CustomText != "")
                         {
-                            plugin.CreateAnouncment(CustomText + " @ " + plugin.getGrid(Output.transform.position) + " <color=red>Closed</color>");
+                            plugin.CreateAnouncment(CustomText, false, Output.transform.position);
                         }
                         //toggle IO Path
                         plugin.FollowIOPath(Output, false);
                     }
                 }
             }
-
-
 
             int CheckMe(BaseEntity be)
             {
@@ -663,10 +788,10 @@ namespace Oxide.Plugins
 
             void switchoff()
             {
-                //Send the announcement if its enabled
+                //Send the announcement if its enabled and has a custom text
                 if (plugin.Announcements && CustomText != "")
                 {
-                    plugin.CreateAnouncment(CustomText + " @ " + plugin.getGrid(Output.transform.position) + " <color=red>Closed</color>");
+                    plugin.CreateAnouncment(CustomText, false, Output.transform.position);
                 }
                 //Disable the IO
                 plugin.FollowIOPath(Output, false);
@@ -680,14 +805,73 @@ namespace Oxide.Plugins
                 {
                     //Gets realtime
                     localTime = new DateTimeOffset(DateTime.Now);
+                    localTime.AddDays(plugin.D);
                     localTime.AddHours(plugin.H);
                     localTime.AddMinutes(plugin.M);
+                    localTime.AddSeconds(plugin.S);
                 }
                 //If clock is a output check its conditions
                 if (Output != null)
                 {
                     CheckOutputs(localTime);
                 }
+
+                //Do count down Function
+                if (Countdown)
+                {
+                    if (Daily)
+                    {
+                        //Over-rides the year,month and day to make output daily.
+                        localTime = new DateTime(TriggerDate.Year, TriggerDate.Month, TriggerDate.Day, localTime.Hour, localTime.Minute, localTime.Second);
+                        localTime.AddDays(-1);
+                    }
+                    //Work out the difference between nows time and trigger time.
+                    TimeSpan span = TriggerDate.Subtract(new DateTime(localTime.Ticks));
+                    int Daysdiff = span.Days;
+                    int Secondsdiff = span.Seconds;
+                    int Minutesdiff = span.Minutes;
+                    int Hoursdiff = span.Hours + (24 * Daysdiff);
+                    if (localTime >= TriggerDate)
+                    {
+                        //Show Nothing since count down finished
+                        Secondsdiff = 0;
+                        Minutesdiff = 0;
+                        Hoursdiff = 0;
+                    }
+
+                    if (Hours != null)
+                    {
+                        //Update hour counter if its changed
+                        if (Hours.counterNumber != Hoursdiff)
+                        {
+                            Hours.SetCounterNumber(Hoursdiff);
+                            Hours.SendNetworkUpdateImmediate();
+                        }
+                        return;
+                    }
+                    if (Mins != null)
+                    {
+                        //Update min counter if its changed
+                        if (Mins.counterNumber != Minutesdiff)
+                        {
+                            Mins.SetCounterNumber(Minutesdiff);
+                            Mins.SendNetworkUpdateImmediate();
+                        }
+                        return;
+                    }
+                    if (Sec != null)
+                    {
+                        //Update sec counter if its changed
+                        if (Sec.counterNumber != Secondsdiff)
+                        {
+                            Sec.SetCounterNumber(Secondsdiff);
+                            Sec.SendNetworkUpdateImmediate();
+                        }
+                        return;
+                    }
+                    return;
+                }
+
                 if (Hours != null)
                 {
                     if (!hour24)
@@ -697,7 +881,7 @@ namespace Oxide.Plugins
                         if (Hours.counterNumber != h)
                         {
                             //use little hh for 12 hour layout
-                            Hours.SetCounterNumber(int.Parse(localTime.ToString("hh")));
+                            Hours.SetCounterNumber(h);
                             Hours.SendNetworkUpdateImmediate();
                             return;
                         }
@@ -708,8 +892,9 @@ namespace Oxide.Plugins
                         int h = int.Parse(localTime.ToString("HH"));
                         if (Hours.counterNumber != h)
                         {
-                            Hours.SetCounterNumber(int.Parse(localTime.ToString("HH")));
+                            Hours.SetCounterNumber(h);
                             Hours.SendNetworkUpdateImmediate();
+                            return;
                         }
                     }
                 }
@@ -719,7 +904,7 @@ namespace Oxide.Plugins
                     int m = int.Parse(localTime.ToString("mm"));
                     if (Mins.counterNumber != m)
                     {
-                        Mins.SetCounterNumber(int.Parse(localTime.ToString("mm")));
+                        Mins.SetCounterNumber(m);
                         Mins.SendNetworkUpdateImmediate();
                         return;
                     }
@@ -732,6 +917,7 @@ namespace Oxide.Plugins
                     {
                         Sec.SetCounterNumber(s);
                         Sec.SendNetworkUpdateImmediate();
+                        return;
                     }
                 }
             }
