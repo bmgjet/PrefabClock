@@ -1,3 +1,5 @@
+<h1><strong>Information Out of Date, will update tomorrow or look inside plugin code for simple explination<br /></strong></h1>
+<br><br>
 <h1><strong>PrefabClock<br /></strong></h1>
 <p><img src="https://github.com/bmgjet/PrefabClock/raw/main/PrefabClock.png" alt="" /></p>
 <p>Install Plugin in Oxide/Plugins folder.<br />Edit plugin files settings to match those you require<br />Place Prefabs in RustEdits Custom Prefabs folder.<br />Use prefabs on map,</p>
