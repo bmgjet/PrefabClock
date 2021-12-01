@@ -14,7 +14,7 @@ namespace Oxide.Plugins
     {
         //Prefab name layouts
         //Example
-        //BMGJETCLOCK24.S.00.00.00.15.00.00.60.{CRED}Light{CEND} And {CBLUE}Tesla Coil{CEND} @ {P} Has {1}
+        //BMGJETCLOCK24.S.00.00.00.15.00.00.60.{CRED}Light{CEND} And {CBLUE}Tesla Coil{CEND} @ {P} has {1} for {T} secs
 
         //Break Down
         //BMGJETCLOCK to trigger plugin on prefab name
@@ -37,7 +37,8 @@ namespace Oxide.Plugins
         //REGEX is used to set up custom things.
         //Such as the example {CRED} would replace that with <color=red>
         //{P} outputs the grid position
-        //{1} selects what state text to use.
+        //{T} outputs the delay before auto disable
+        //{1} selects what state text to use from Dictionary
         //These can be changed or added to in the plugin below
 
         Dictionary<string, Dictionary<string, string>> CustomText = new Dictionary<string, Dictionary<string, string>>()
@@ -54,9 +55,9 @@ namespace Oxide.Plugins
         {"{CEND}", "</color>"},
         {"{CRED}", "<color=red>"},
         {"{CBLUE}","<color=blue>"},
+        {"{CBLACK}","<color=black>"},
         {"{CORANGE}","<color=orange>"},
         };
-
 
         #region Vars
         //Permission to see IO Output
@@ -299,7 +300,7 @@ namespace Oxide.Plugins
             {
                 Tcoil.SetFlag(TeslaCoil.Flag_StrongShorting, enabled);
                 //Need to do something about a damage setting
-                Tcoil.maxDischargeSelfDamageSeconds = 999999f;
+                Tcoil.maxDischargeSelfDamageSeconds = 120f;
                 if (enabled)
                 {
                     //Trigger teslacoils function
@@ -319,11 +320,14 @@ namespace Oxide.Plugins
         }
 
         //Sends message to all active players under a steamID
-        void CreateAnouncment(string msg, bool open, Vector3 pos)
+        void CreateAnouncment(string msg, bool open, Vector3 pos,int time = 0)
         {
             //Parse out text tags with regex
             // {P} give position on grid
             msg = msg.Replace("{P}", getGrid(pos));
+            // {T} give the ammount of time before auto close
+            if (time != 0)
+                msg = msg.Replace("{T}", time.ToString());
             //Find outher tags with in { } brackets
             MatchCollection matches = Regex.Matches(msg, "{.*?}");
             foreach (Match match in matches)
@@ -455,6 +459,66 @@ namespace Oxide.Plugins
         bool IsInvisible(BasePlayer player)
         {
             return Vanish != null && Vanish.Call<bool>("IsInvisible", player);
+        }
+
+        int CheckMe(BaseEntity be)
+        {
+            //Work out which counter it is
+            Vector3 Left = be.transform.position + be.transform.right * -0.2f;
+            Vector3 Right = be.transform.position + be.transform.right * 0.2f;
+            var CheckLeft = plugin.FindCounter(Left, 0.01f, Color.red);
+            var CheckRight = plugin.FindCounter(Right, 0.01f, Color.red);
+            if (CheckLeft && CheckRight) return 1;
+            if (CheckLeft && !CheckRight) return 0;
+            if (!CheckLeft && CheckRight) return 2;
+            return -1;
+        }
+
+        //Create IO point on the middle counter
+        ElectricalBlocker AddOutput(PowerCounter Mins)
+        {
+            //Adjust position
+            Vector3 pos = Mins.transform.position;
+            pos -= Mins.transform.forward * 0.058f;
+            pos += Mins.transform.up * 0.168f;
+            ElectricalBlocker EB = plugin.FindSocket(pos, 0.25f);
+            //Check if outputs is enabled other wise destroy if ones has been created there.
+            if (!plugin.EnableOutput)
+            {
+                if (EB == null)
+                {
+                    return null;
+                }
+                EB.Kill();
+                return null;
+            }
+            //If no blocker found create one.
+            if (EB == null)
+            {
+                ElectricalBlocker OutputSocket = GameManager.server.CreateEntity("assets/prefabs/deployable/playerioents/gates/blocker/electrical.blocker.deployed.prefab", Mins.transform.position, Mins.transform.rotation) as ElectricalBlocker;
+                if (OutputSocket == null) return null;
+                plugin.DestroyGroundComp(OutputSocket);
+                plugin.DestroyMeshCollider(OutputSocket);
+                OutputSocket.transform.position = pos;
+                //How its identified
+                OutputSocket.OwnerID = 0;
+                OutputSocket.skinID = 264592;
+                //create
+                OutputSocket.Spawn();
+                //Reference
+                return EB;
+            }
+            else
+            {
+                //Link to a blocker if already present since must be server restart.
+                plugin.DestroyGroundComp(EB);
+                plugin.DestroyMeshCollider(EB);
+                //How its identified
+                EB.OwnerID = 0;
+                EB.skinID = 264592;
+                //Reference
+                return EB;
+            }
         }
 
         void DestroyGroundComp(BaseEntity ent)
@@ -662,7 +726,7 @@ namespace Oxide.Plugins
                     { }
                 }
                 //Find what position the counter is
-                switch (CheckMe(ThisCounter))
+                switch (plugin.CheckMe(ThisCounter))
                 {
                     case 0:
                         Hours = ThisCounter;
@@ -670,7 +734,7 @@ namespace Oxide.Plugins
                     case 1:
                         Mins = ThisCounter;
                         //Add the output at the middle of the clock
-                        AddOutput();
+                        Output = plugin.AddOutput(Mins);
                         break;
                     case 2:
                         Sec = ThisCounter;
@@ -678,53 +742,6 @@ namespace Oxide.Plugins
                 }
                 //Setup updates
                 InvokeRepeating("tick", 1, 1);
-            }
-
-            //Create IO point on the middle counter
-            void AddOutput()
-            {
-                //Adjust position
-                Vector3 pos = Mins.transform.position;
-                pos -= Mins.transform.forward * 0.058f;
-                pos += Mins.transform.up * 0.168f;
-                ElectricalBlocker EB = plugin.FindSocket(pos, 0.25f);
-                //Check if outputs is enabled other wise destroy if ones has been created there.
-                if (!plugin.EnableOutput)
-                {
-                    if (EB == null)
-                    {
-                        return;
-                    }
-                    EB.Kill();
-                    return;
-                }
-                //If no blocker found create one.
-                if (EB == null)
-                {
-                    ElectricalBlocker OutputSocket = GameManager.server.CreateEntity("assets/prefabs/deployable/playerioents/gates/blocker/electrical.blocker.deployed.prefab", Mins.transform.position, Mins.transform.rotation) as ElectricalBlocker;
-                    if (OutputSocket == null) return;
-                    plugin.DestroyGroundComp(OutputSocket);
-                    plugin.DestroyMeshCollider(OutputSocket);
-                    OutputSocket.transform.position = pos;
-                    //How its identified
-                    OutputSocket.OwnerID = 0;
-                    OutputSocket.skinID = 264592;
-                    //create
-                    OutputSocket.Spawn();
-                    //Reference
-                    Output = EB;
-                }
-                else
-                {
-                    //Link to a blocker if already present since must be server restart.
-                    plugin.DestroyGroundComp(EB);
-                    plugin.DestroyMeshCollider(EB);
-                    //How its identified
-                    EB.OwnerID = 0;
-                    EB.skinID = 264592;
-                    //Reference
-                    Output = EB;
-                }
             }
 
             void CheckOutputs(DateTimeOffset localTime)
@@ -747,7 +764,7 @@ namespace Oxide.Plugins
                         //If announcements enabled and a custom text is set make annoucement
                         if (plugin.Announcements && CustomText != "")
                         {
-                            plugin.CreateAnouncment(CustomText, true, Output.transform.position);
+                            plugin.CreateAnouncment(CustomText, true, Output.transform.position, CloseDelay);
                         }
                         //Add disable timer if set
                         if (CloseDelay != 0)
@@ -771,19 +788,6 @@ namespace Oxide.Plugins
                         plugin.FollowIOPath(Output, false);
                     }
                 }
-            }
-
-            int CheckMe(BaseEntity be)
-            {
-                //Work out which counter it is
-                Vector3 Left = be.transform.position + be.transform.right * -0.2f;
-                Vector3 Right = be.transform.position + be.transform.right * 0.2f;
-                var CheckLeft = plugin.FindCounter(Left, 0.01f, Color.red);
-                var CheckRight = plugin.FindCounter(Right, 0.01f, Color.red);
-                if (CheckLeft && CheckRight) return 1;
-                if (CheckLeft && !CheckRight) return 0;
-                if (!CheckLeft && CheckRight) return 2;
-                return -1;
             }
 
             void switchoff()
