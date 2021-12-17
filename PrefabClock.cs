@@ -96,6 +96,7 @@ namespace Oxide.Plugins
         //Hides spawned ElectricalBlockers that are used as IO point
         object CanNetworkTo(ElectricalBlocker EB, BasePlayer player)
         {
+            if (EB == null || player == null) return null;
             //ID it by ownerid and skinid to return fast on other ElectricalBlocker
             if (EB.OwnerID != 0 && EB.skinID != 264592) return null;
             //If player has permission allow them to see clock blocker IO
@@ -125,7 +126,7 @@ namespace Oxide.Plugins
             //Waits for player before running script to help first startup performance.
             timer.Once(10f, () =>
             {
-                if (BasePlayer.activePlayerList.Count == 0)
+                if (Rust.Application.isLoading)
                 {
                     //No players so run a timer again in 10 sec to check.
                     Fstartup();
@@ -164,6 +165,8 @@ namespace Oxide.Plugins
                     PC.SetFlag(PowerCounter.Flag_HasPower, true);
                     //Disable showing power its passing to show its target
                     PC.SetFlag(PowerCounter.Flag_ShowPassthrough, false);
+                    PC.SetFlag(IOEntity.Flags.Reserved8,true);
+                    PC.SetFlag(IOEntity.Flag_HasPower, true);
                     //Add clock script
                     PC.gameObject.AddComponent<PrefabClockAddon>();
                     PC.SendNetworkUpdateImmediate();
@@ -320,7 +323,7 @@ namespace Oxide.Plugins
         }
 
         //Sends message to all active players under a steamID
-        void CreateAnouncment(string msg, bool open, Vector3 pos,int time = 0)
+        void CreateAnouncment(string msg, bool open, Vector3 pos, int time = 0)
         {
             //Parse out text tags with regex
             // {P} give position on grid
@@ -333,7 +336,7 @@ namespace Oxide.Plugins
             foreach (Match match in matches)
             {
                 //Tags to replace things you cant enter in the prefab name like color codes.
-                if(CustomTags.ContainsKey(match.ToString()))
+                if (CustomTags.ContainsKey(match.ToString()))
                 {
                     msg = msg.Replace(match.ToString(), CustomTags[match.ToString()]);
                     continue;
