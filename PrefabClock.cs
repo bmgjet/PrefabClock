@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("PrefabClock", "bmgjet", "1.0.1")]
+    [Info("PrefabClock", "bmgjet", "1.0.2")]
     [Description("Controls bmgjets clock prefab")]
     public class PrefabClock : RustPlugin
     {
@@ -161,12 +161,12 @@ namespace Oxide.Plugins
                     //Keep track of prefab position and settings
                     ClockSettings.Add(PC.transform.position, settings);
 
-                    //Power up counter so it displays numbers
-                    PC.SetFlag(PowerCounter.Flag_HasPower, true);
-                    //Disable showing power its passing to show its target
-                    PC.SetFlag(PowerCounter.Flag_ShowPassthrough, false);
-                    PC.SetFlag(IOEntity.Flags.Reserved8,true);
-                    PC.SetFlag(IOEntity.Flag_HasPower, true);
+                    ////Power up counter so it displays numbers
+                    //PC.SetFlag(PowerCounter.Flag_HasPower, true);
+                    ////Disable showing power its passing to show its target
+                    //PC.SetFlag(PowerCounter.Flag_ShowPassthrough, false);
+                    //PC.SetFlag(IOEntity.Flags.Reserved8, true);
+                    //PC.SetFlag(IOEntity.Flag_HasPower, true);
                     //Add clock script
                     PC.gameObject.AddComponent<PrefabClockAddon>();
                     PC.SendNetworkUpdateImmediate();
@@ -235,13 +235,21 @@ namespace Oxide.Plugins
             while (FollowIOPath != null)
             {
                 //Keep looping until the end of the path.
-                FollowIOPath = plugin.ToggleIO(FollowIOPath, Enable);
+                try
+                {
+                    FollowIOPath = plugin.ToggleIO(FollowIOPath, Enable);
+                }
+                catch
+                {
+                    FollowIOPath = null;
+                }
             }
         }
 
         //Logic behind toggling the IO since we arnt using power unless first connect item is a orswitch
         IOEntity ToggleIO(IOEntity FollowIOPath, bool enabled)
         {
+            if (FollowIOPath == null) { return null; }
             //Enable it
             FollowIOPath.SetFlag(BaseEntity.Flags.Reserved8, enabled);
             FollowIOPath.SetFlag(IOEntity.Flag_HasPower, enabled);
@@ -276,7 +284,14 @@ namespace Oxide.Plugins
                 DoorMan.DoAction();
                 //Exit function early to improve performance on long door strings
                 DoorMan.SendNetworkUpdateImmediate();
-                return DoorMan.outputs[0].connectedTo.ioEnt;
+                if (DoorMan.outputs[0] != null && DoorMan.outputs[0].connectedTo.ioEnt != null)
+                {
+                    return DoorMan.outputs[0].connectedTo.ioEnt;
+                }
+                else
+                {
+                    return null;
+                }
             }
             //Handle OrSwitch Use a Orswitch as a power output.
             ORSwitch OrSwitch = FollowIOPath as ORSwitch;
@@ -319,7 +334,11 @@ namespace Oxide.Plugins
             //Send update to clients
             FollowIOPath.SendNetworkUpdateImmediate();
             //Return the next IO in the connection
-            return FollowIOPath.outputs[0].connectedTo.ioEnt;
+            if (FollowIOPath.outputs[0] != null && FollowIOPath.outputs[0].connectedTo.ioEnt != null)
+            {
+                return FollowIOPath.outputs[0].connectedTo.ioEnt;
+            }
+            return null;
         }
 
         //Sends message to all active players under a steamID
@@ -371,13 +390,14 @@ namespace Oxide.Plugins
         //Gets grid letter from world position
         string getGrid(Vector3 pos)
         {
+	return PhoneController.PositionToGridCoord(pos);
             //Set base letter
-            char letter = 'A';
-            var x = Mathf.Floor((pos.x + (ConVar.Server.worldsize / 2)) / 146.3f) % 26;
-            var z = (Mathf.Floor(ConVar.Server.worldsize / 146.3f)) - Mathf.Floor((pos.z + (ConVar.Server.worldsize / 2)) / 146.3f);
-            letter = (char)(((int)letter) + x);
+            //char letter = 'A';
+            //var x = Mathf.Floor((pos.x + (ConVar.Server.worldsize / 2)) / 146.3f) % 26;
+            //var z = (Mathf.Floor(ConVar.Server.worldsize / 146.3f)) - Mathf.Floor((pos.z + (ConVar.Server.worldsize / 2)) / 146.3f);
+            //letter = (char)(((int)letter) + x);
             //-1 since starts at 0
-            return $"{letter}{z - 1}";
+            //return $"{letter}{z - 1}";
         }
 
         //Resets the ability for the admin to see the IO on the Clocks
@@ -745,6 +765,36 @@ namespace Oxide.Plugins
                 }
                 //Setup updates
                 InvokeRepeating("tick", 1, 1);
+                InvokeRepeating("Repowerup", 1, 60);
+            }
+
+
+            void Repowerup()
+            {
+                if (Hours != null)
+                {
+                    Hours.SetFlag(PowerCounter.Flag_HasPower, true);
+                    Hours.SetFlag(PowerCounter.Flag_ShowPassthrough, false);
+                    Hours.SetFlag(IOEntity.Flags.Reserved8, true);
+                    Hours.SetFlag(IOEntity.Flag_HasPower, true);
+                    Hours.SendNetworkUpdateImmediate();
+                }
+                if (Mins != null)
+                {
+                    Mins.SetFlag(PowerCounter.Flag_HasPower, true);
+                    Mins.SetFlag(PowerCounter.Flag_ShowPassthrough, false);
+                    Mins.SetFlag(IOEntity.Flags.Reserved8, true);
+                    Mins.SetFlag(IOEntity.Flag_HasPower, true);
+                    Mins.SendNetworkUpdateImmediate();
+                }
+                if (Sec != null)
+                {
+                    Sec.SetFlag(PowerCounter.Flag_HasPower, true);
+                    Sec.SetFlag(PowerCounter.Flag_ShowPassthrough, false);
+                    Sec.SetFlag(IOEntity.Flags.Reserved8, true);
+                    Sec.SetFlag(IOEntity.Flag_HasPower, true);
+                    Sec.SendNetworkUpdateImmediate();
+                }
             }
 
             void CheckOutputs(DateTimeOffset localTime)
